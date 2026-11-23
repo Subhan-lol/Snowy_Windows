@@ -1,0 +1,75 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (MSVC x64)
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Self-test on the runner desktop
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:GITHUB_WORKSPACE "selftest"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $p = Start-Process -FilePath "build\Release\Snowy.exe" -ArgumentList @("--selftest", "`"$out`"") -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); Write-Host "::warning::selftest timed out" }
+          $log = Join-Path $env:LOCALAPPDATA "Snowy\snowy.log"
+          if (Test-Path $log) { Copy-Item $log $out; Get-Content $log }
+          Get-ChildItem $out
+          Write-Host "Exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { Write-Host "::warning::selftest exit code $($p.ExitCode)" }
+
+      - name: Offscreen render test
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:GITHUB_WORKSPACE "render"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $p = Start-Process -FilePath "build\Release\Snowy.exe" -ArgumentList @("--render-test", "`"$out`"", "--seconds", "30", "--every", "75") -PassThru
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); throw "render test timed out" }
+          $log = Join-Path $env:LOCALAPPDATA "Snowy\snowy.log"
+          if (Test-Path $log) { Get-Content $log }
+          Get-ChildItem $out
+          if ($p.ExitCode -ne 0) { throw "render test failed: $($p.ExitCode)" }
+
+      - name: Upload Snowy.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Snowy-windows-x64
+          path: build/Release/Snowy.exe
+
+      - name: Upload test screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-screenshots
+          path: |
+            selftest/
+            render/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Snowy-windows-x64
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: Snowy.exe
+          generate_release_notes: true

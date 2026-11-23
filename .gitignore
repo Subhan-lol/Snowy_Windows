@@ -1,0 +1,11 @@
+build/
+out/
+*.obj
+*.o
+*.pdb
+*.ilk
+.vs/
+CMakeFiles/
+CMakeCache.txt
+selftest/
+render/
